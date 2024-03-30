@@ -17,8 +17,14 @@ push-boards: $(BOARDS:%=push-%)
 version:
 	echo 'VERSION = "$(VERSION)-$(COMMIT_HASH)"' > frigate/version.py
 
+clean:
+	docker buildx stop builder && docker buildx rm builder
+	docker run --privileged --rm tonistiigi/binfmt --install all
+	docker buildx create --name builder --driver docker-container --driver-opt network=host --use
+	docker buildx inspect builder --bootstrap
+
 local: version
-	docker buildx build --target=frigate --tag frigate:latest --load --file docker/main/Dockerfile .
+	docker buildx build --target=frigate --tag frigate-yolo:latest --load --file docker/main/Dockerfile .
 
 amd64:
 	docker buildx build --platform linux/amd64 --target=frigate --tag $(IMAGE_REPO):$(VERSION)-$(COMMIT_HASH) --file docker/main/Dockerfile .

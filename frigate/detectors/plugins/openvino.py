@@ -20,7 +20,7 @@ class OvDetectorConfig(BaseDetectorConfig):
 
 class OvDetector(DetectionApi):
     type_key = DETECTOR_KEY
-    supported_models = [ModelTypeEnum.ssd, ModelTypeEnum.yolonas, ModelTypeEnum.yolox]
+    supported_models = [ModelTypeEnum.ssd, ModelTypeEnum.yolonas, ModelTypeEnum.yolox, ModelTypeEnum.yolov8]
 
     def __init__(self, detector_config: OvDetectorConfig):
         self.ov_core = ov.Core()
@@ -151,8 +151,10 @@ class OvDetector(DetectionApi):
     def detect_raw(self, tensor_input):
         infer_request = self.interpreter.create_infer_request()
         # TODO: see if we can use shared_memory=True
-        input_tensor = ov.Tensor(array=tensor_input)
-        infer_request.infer(input_tensor)
+
+        # ParameterMismatch: Failed to set tensor for input with precision: u8, since the model input tensor precision is: f32
+        arr = np.array(tensor_input, dtype=np.float32)
+        infer_request.infer(ov.Tensor(array=arr))
 
         detections = np.zeros((20, 6), np.float32)
 
@@ -219,5 +221,28 @@ class OvDetector(DetectionApi):
             for i, object_detected in enumerate(ordered):
                 detections[i] = self.process_yolo(
                     object_detected[6], object_detected[5], object_detected[:4]
+                )
+            return detections
+
+        if self.ov_model_type == ModelTypeEnum.yolov8:
+            predictions = infer_request.get_output_tensor().data[0]
+            output_data = np.transpose(predictions)
+
+            scores = np.max(output_data[:, 4:], axis=1)
+            if len(scores) == 0:
+                return detections
+            scores = np.expand_dims(scores, axis=1)
+            # add scores to the last column
+            dets = np.concatenate((output_data, scores), axis=1)
+            # filter out lines with scores below threshold
+            dets = dets[dets[:, -1] > 0.5, :]
+            # limit to top 20 scores, descending order
+            ordered = dets[dets[:, -1].argsort()[::-1]][:20]
+
+            for i, object_detected in enumerate(ordered):
+                detections[i] = self.process_yolo(
+                    np.argmax(object_detected[4:-1]),
+                    object_detected[-1],
+                    object_detected[:4],
                 )
             return detections
